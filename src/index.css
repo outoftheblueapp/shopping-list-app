@@ -2,6 +2,123 @@
 @tailwind components;
 @tailwind utilities;
 
-html, body {
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+/* Design tokens */
+:root{
+  --bg: #f7f7fb;
+  --card: #ffffff;
+  --muted: #94a3b8;
+  --brand: #6366f1;        /* indigo-500 */
+  --brand-600: #4f46e5;    /* indigo-600 */
+  --accent: #06b6d4;       /* teal-400 for small accents */
+  --success: #10b981;
+  --soft-shadow: 0 6px 20px rgba(15,23,42,0.06);
+  --glass: rgba(255,255,255,0.6);
+  --max-w: 720px;
+}
+
+/* Body / base */
+html,body{
+  height:100%;
+  background: var(--bg);
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans Hebrew", sans-serif;
+  color: #0f172a;
+  line-height:1.35;
+}
+
+/* Container constraint for mobile-first */
+.app-shell {
+  max-width: var(--max-w);
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+/* Card style */
+.card {
+  background: var(--card);
+  border-radius: 18px;
+  box-shadow: var(--soft-shadow);
+  border: 1px solid rgba(15,23,42,0.03);
+}
+
+/* Primary button (Tailwind classes + this helper for consistent pressed state) */
+.btn-primary {
+  background: linear-gradient(180deg,var(--brand),var(--brand-600));
+  color: white;
+  border-radius: 9999px;
+  padding: 0.65rem 1rem;
+  font-weight: 600;
+  box-shadow: 0 8px 20px rgba(79,70,229,0.12);
+  transition: transform .12s ease, box-shadow .12s ease, opacity .12s ease;
+}
+.btn-primary:active { transform: translateY(1px) scale(.997); box-shadow: 0 6px 14px rgba(79,70,229,0.10); }
+
+/* Secondary filled button */
+.btn-secondary {
+  background: white;
+  border-radius: 9999px;
+  padding: 0.5rem .8rem;
+  border: 1px solid rgba(15,23,42,0.06);
+  transition: transform .12s ease, background .12s ease;
+}
+.btn-secondary:active { transform: translateY(1px) }
+
+/* Toast / small microcopy */
+.toast {
+  background: rgba(15,23,42,0.92);
+  color: white;
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  box-shadow: 0 6px 18px rgba(2,6,23,0.4);
+}
+
+/* Bottom sheet slide */
+.sheet-enter { transform: translateY(30%); opacity: 0; }
+.sheet-enter-active { transform: translateY(0%); opacity: 1; transition: transform .32s cubic-bezier(.22,.9,.3,1), opacity .24s ease; }
+.sheet-exit { transform: translateY(0%); opacity: 1; }
+.sheet-exit-active { transform: translateY(30%); opacity: 0; transition: transform .28s ease, opacity .2s ease; }
+
+/* Bought animation */
+.bought-anim {
+  animation: bought-pop 420ms cubic-bezier(.2,.9,.2,1);
+}
+@keyframes bought-pop {
+  0% { transform: scale(1); opacity: 1; }
+  40% { transform: scale(1.03); opacity: 1; }
+  100% { transform: translateX(18px) scale(.98); opacity: 0; }
+}
+
+/* Drag handle */
+.sheet-drag {
+  width: 46px;
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(15,23,42,0.08), rgba(15,23,42,0.12));
+  margin: 8px auto;
+}
+
+/* Tappable chip */
+.chip {
+  border-radius: 9999px;
+  padding: 6px 12px;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap:8px;
+  box-shadow: 0 6px 18px rgba(2,6,23,0.03);
+  transition: transform .12s ease, background .12s ease;
+}
+.chip:active { transform: translateY(1px) scale(.997) }
+
+/* Small RTL nicety */
+input[dir="auto"], textarea[dir="auto"] { unicode-bidi: embed; }
+
+/* Responsive tweaks */
+@media (max-width:420px) {
+  :root { --max-w: 420px; }
+  .btn-primary { width: 100%; padding: .8rem; }
 }
