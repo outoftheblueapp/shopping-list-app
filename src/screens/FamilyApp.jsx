@@ -216,7 +216,8 @@ export default function FamilyApp({ listId }) {
           type="button"
         >
           <span className="text-xl leading-none">＋</span>
-          <span>הוספת פריט ידני</span>
+          <span>＋ הוספה מהירה</span>
+
         </button>
       )}
 
