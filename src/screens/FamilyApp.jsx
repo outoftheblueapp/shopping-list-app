@@ -80,9 +80,7 @@ export default function FamilyApp({ listId }) {
   const filteredBaseItems = useMemo(() => {
     if (!search.trim()) return MOCK_BASE_ITEMS;
     const s = search.trim();
-    return MOCK_BASE_ITEMS.filter((item) =>
-      item.name_he.includes(s)
-    );
+    return MOCK_BASE_ITEMS.filter((item) => item.name_he.includes(s));
   }, [search]);
 
   const filteredCurrentList = useMemo(() => {
@@ -163,14 +161,14 @@ export default function FamilyApp({ listId }) {
 
   function handleMarkBought(id) {
     // trigger animation: add to animatingIds, then remove after 420ms
-    setAnimatingIds(prev => {
+    setAnimatingIds((prev) => {
       const clone = new Set(prev);
       clone.add(id);
       return clone;
     });
     setTimeout(() => {
-      setCurrentList(prev => prev.filter(item => item.id !== id));
-      setAnimatingIds(prev => {
+      setCurrentList((prev) => prev.filter((item) => item.id !== id));
+      setAnimatingIds((prev) => {
         const clone = new Set(prev);
         clone.delete(id);
         return clone;
@@ -190,10 +188,8 @@ export default function FamilyApp({ listId }) {
               🛒
             </div>
             <div className="leading-tight">
-                <div className="text-xs text-slate-500">רשימת קניות</div>
-                <div className="text-sm font-semibold truncate">
-                  משפחה: {listId}
-                </div>
+              <div className="text-xs text-slate-500">רשימת קניות</div>
+              <div className="text-sm font-semibold truncate">משפחה: {listId}</div>
             </div>
           </div>
           <ModeToggle mode={mode} onChange={setMode} />
@@ -210,9 +206,7 @@ export default function FamilyApp({ listId }) {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
-            <span className="absolute left-3 top-2.5 text-slate-400 text-lg">
-              🔍
-            </span>
+            <span className="absolute left-3 top-2.5 text-slate-400 text-lg">🔍</span>
           </div>
         </div>
       </header>
@@ -251,11 +245,7 @@ export default function FamilyApp({ listId }) {
       {/* Bottom sheet */}
       <BottomSheet
         open={sheetOpen}
-        title={
-          sheetMode === "catalog"
-            ? selectedItem?.name_he ?? ""
-            : "פריט חדש"
-        }
+        title={sheetMode === "catalog" ? selectedItem?.name_he ?? "" : "פריט חדש"}
         onClose={closeSheet}
       >
         {sheetMode === "catalog" ? (
@@ -289,6 +279,261 @@ export default function FamilyApp({ listId }) {
 
 /* ----- Subcomponents (kept inside file for convenience) ----- */
 
-/* ... CatalogSheetContent and ManualSheetContent definitions omitted here to keep file concise for the patch; 
-   the full file uploaded in the zip includes them as in the original app for completeness. */
+function ListModeView({ categories, baseItems, currentList, itemsInListSet, onOpenSheet }) {
+  const itemsByCategory = useMemo(() => {
+    const map = {};
+    for (const c of categories) map[c.id] = [];
+    for (const item of baseItems) {
+      if (!map[item.category_id]) map[item.category_id] = [];
+      map[item.category_id].push(item);
+    }
+    return map;
+  }, [categories, baseItems]);
 
+  return (
+    <div className="space-y-4">
+      {/* Active items preview */}
+      {currentList.length > 0 && (
+        <section className="bg-white rounded-3xl shadow-sm p-3 mb-2 card">
+          <h3 className="text-xs font-semibold text-slate-500 mb-1.5">כבר ברשימה ({currentList.length})</h3>
+          <div className="flex flex-wrap gap-1.5 text-xs">
+            {currentList.map((item) => (
+              <span key={item.id} className="inline-flex items-center gap-1 rounded-full bg-indigo-50 text-indigo-700 px-3 py-1">
+                <span>{item.name_he}</span>
+                {item.qty_text && <span className="text-[10px] text-indigo-500">{item.qty_text}</span>}
+              </span>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Catalog by category */}
+      {categories.map((cat) => {
+        const items = itemsByCategory[cat.id] || [];
+        if (items.length === 0) return null;
+        return (
+          <section key={cat.id} className="bg-white rounded-3xl shadow-sm p-3 card">
+            <h3 className="text-sm font-semibold mb-2 flex items-center justify-between">
+              <span>{cat.name_he}</span>
+              <span className="text-xs text-slate-400">{items.length} פריטים</span>
+            </h3>
+            <div className="flex flex-wrap gap-1.5">
+              {items.map((item) => {
+                const already = itemsInListSet.has(item.id);
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => onOpenSheet(item)}
+                    disabled={already}
+                    className={
+                      "inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs border transition shadow-sm chip " +
+                      (already
+                        ? "bg-slate-100 text-slate-400 border-slate-200"
+                        : "bg-slate-50 text-slate-800 border-slate-200 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-700")
+                    }
+                  >
+                    <span>{item.name_he}</span>
+                    {!already && <span className="text-slate-400 text-sm">＋</span>}
+                    {already && <span className="text-[10px] text-slate-400">ברשימה</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+function ShoppingModeView({ groupedCurrentList, allDone, onMarkBought, animatingIds }) {
+  if (allDone) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <div className="text-center space-y-2">
+          <div className="text-4xl mb-1">🥳</div>
+          <h2 className="text-lg font-semibold">סיימת את רשימת הקניות!</h2>
+          <p className="text-sm text-slate-500">אין כרגע פריטים לקנייה. אפשר לחזור למצב רשימה ולהוסיף.</p>
+        </div>
+      </div>
+    );
+  }
+
+  const categoryNames = Object.keys(groupedCurrentList).sort();
+
+  return (
+    <div className="space-y-4">
+      {categoryNames.map((catName) => (
+        <section key={catName} className="bg-white rounded-3xl shadow-sm p-3 card">
+          <h3 className="text-sm font-semibold mb-2">{catName}</h3>
+          <div className="space-y-2">
+            {groupedCurrentList[catName].map((item) => (
+              <button
+                key={item.id}
+                onClick={() => onMarkBought(item.id)}
+                className={
+                  "w-full flex items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-right text-sm hover:bg-emerald-50 hover:border-emerald-200 transition " +
+                  (animatingIds.has(item.id) ? "bought-anim" : "")
+                }
+              >
+                <div className="flex-1">
+                  <div className="font-medium">{item.name_he}</div>
+                  {(item.qty_text || item.comment) && (
+                    <div className="mt-0.5 text-xs text-slate-500 space-y-0.5">
+                      {item.qty_text && <div className="font-medium text-slate-600">{item.qty_text}</div>}
+                      {item.comment && <div>{item.comment}</div>}
+                    </div>
+                  )}
+                </div>
+                <div className="h-6 w-6 rounded-full border border-emerald-400 flex items-center justify-center text-emerald-500 text-lg">✓</div>
+              </button>
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+/* CatalogSheetContent and ManualSheetContent (full definitions) */
+
+function CatalogSheetContent({ formQty, setFormQty, formComment, setFormComment, onSubmit }) {
+  return (
+    <form
+      className="space-y-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSubmit();
+      }}
+    >
+      <div className="space-y-1">
+        <label className="text-sm font-medium">כמות (לא חובה)</label>
+        <input
+          type="text"
+          dir="auto"
+          className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          placeholder='לדוגמה: "2 ליטר", "5", "2 ק״ג"'
+          value={formQty}
+          onChange={(e) => setFormQty(e.target.value)}
+        />
+      </div>
+      <div className="space-y-1">
+        <label className="text-sm font-medium">הערה (לא חובה)</label>
+        <textarea
+          dir="auto"
+          rows={3}
+          className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none"
+          placeholder='לדוגמה: "לקנות רק אם יש במבצע"'
+          value={formComment}
+          onChange={(e) => setFormComment(e.target.value)}
+        />
+      </div>
+      <button type="submit" className="w-full rounded-full btn-primary">
+        הוספה לרשימה
+      </button>
+    </form>
+  );
+}
+
+function ManualSheetContent({
+  categories,
+  formName,
+  setFormName,
+  formQty,
+  setFormQty,
+  formComment,
+  setFormComment,
+  formSuggestBase,
+  setFormSuggestBase,
+  formCategoryId,
+  setFormCategoryId,
+  onSubmit,
+}) {
+  return (
+    <form
+      className="space-y-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSubmit();
+      }}
+    >
+      <div className="space-y-1">
+        <label className="text-sm font-medium">שם הפריט</label>
+        <input
+          type="text"
+          dir="auto"
+          className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          placeholder='לדוגמה: "Tide 2in1", "טורטיות"'
+          value={formName}
+          onChange={(e) => setFormName(e.target.value)}
+          required
+        />
+      </div>
+      <div className="space-y-1">
+        <label className="text-sm font-medium">כמות (לא חובה)</label>
+        <input
+          type="text"
+          dir="auto"
+          className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          placeholder='לדוגמה: "2 ליטר", "5", "2 ק״ג"'
+          value={formQty}
+          onChange={(e) => setFormQty(e.target.value)}
+        />
+      </div>
+      <div className="space-y-1">
+        <label className="text-sm font-medium">הערה (לא חובה)</label>
+        <textarea
+          dir="auto"
+          rows={3}
+          className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none"
+          placeholder='לדוגמה: "לקנות רק אם על המדף Tide"'
+          value={formComment}
+          onChange={(e) => setFormComment(e.target.value)}
+        />
+      </div>
+
+      <div className="flex items-center justify-between gap-3 bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2.5">
+        <div>
+          <div className="text-sm font-medium">להציע הוספה לבסיס הפריטים?</div>
+          <div className="text-xs text-slate-500">המנהל יאשר לפני שזה יופיע ברשימה הקבועה.</div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setFormSuggestBase((v) => !v)}
+          className={
+            "relative inline-flex h-6 w-11 rounded-full border transition " +
+            (formSuggestBase ? "bg-indigo-500 border-indigo-500" : "bg-slate-200 border-slate-300")
+          }
+        >
+          <span
+            className={
+              "absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transform transition " +
+              (formSuggestBase ? "right-0.5" : "right-[22px]")
+            }
+          />
+        </button>
+      </div>
+
+      {formSuggestBase && (
+        <div className="space-y-1">
+          <label className="text-sm font-medium">קטגוריה</label>
+          <select
+            className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
+            value={formCategoryId ?? ""}
+            onChange={(e) => setFormCategoryId(e.target.value ? Number(e.target.value) : null)}
+          >
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name_he}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      <button type="submit" className="w-full rounded-full btn-primary">
+        הוספה לרשימה
+      </button>
+    </form>
+  );
+}
