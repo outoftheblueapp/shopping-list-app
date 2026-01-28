@@ -1,9 +1,18 @@
-// src/screens/FamilyApp.jsx
-import React, { useMemo, useState } from "react";
-import ModeToggle from "../components/ModeToggle";
-import BottomSheet from "../components/BottomSheet";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import ModeToggle from "../components/ModeToggle.jsx";
+import BottomSheet from "../components/BottomSheet.jsx";
+import { supabase } from "../lib/supabaseClient.js";
 
-const MOCK_CATEGORIES = [
+/**
+ * LIVE MODE (Supabase) + graceful fallback to DEMO MODE
+ * - If VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY are set → Live shared list
+ * - Otherwise → Demo (local state only)
+ *
+ * No history: when you mark as bought, the row is DELETED.
+ */
+
+// Fallback categories/catalog for demo mode (or if DB empty)
+const FALLBACK_CATEGORIES = [
   { id: 1, name_he: "מוצרי יסוד" },
   { id: 2, name_he: "פירות וירקות" },
   { id: 3, name_he: "מוצרי חלב וביצים" },
@@ -11,7 +20,7 @@ const MOCK_CATEGORIES = [
   { id: 5, name_he: "שתייה" },
 ];
 
-const MOCK_BASE_ITEMS = [
+const FALLBACK_CATALOG_ITEMS = [
   { id: 1, name_he: "קמח לבן", category_id: 1 },
   { id: 2, name_he: "סוכר", category_id: 1 },
   { id: 3, name_he: "חלב", category_id: 3 },
@@ -21,67 +30,194 @@ const MOCK_BASE_ITEMS = [
   { id: 7, name_he: "נוזל כביסה", category_id: 4 },
 ];
 
-let tempIdCounter = 1000;
-
 export default function FamilyApp({ listId }) {
+  const live = Boolean(supabase);
+
   const [mode, setMode] = useState("list"); // "list" | "shopping"
   const [search, setSearch] = useState("");
 
-  const [currentList, setCurrentList] = useState([
-    {
-      id: 101,
-      name_he: "חלב",
-      category_id: 3,
-      qty_text: "2 ליטר",
-      comment: "אם יש במבצע 1+1 אז לקנות",
-      fromCatalogId: 3,
-    },
-    {
-      id: 102,
-      name_he: "עגבניות",
-      category_id: 2,
-      qty_text: "6",
-      comment: "",
-      fromCatalogId: 5,
-    },
-  ]);
+  // Categories + catalog
+  const [categories, setCategories] = useState(FALLBACK_CATEGORIES);
+  const [catalogItems, setCatalogItems] = useState(FALLBACK_CATALOG_ITEMS);
 
-  // set of ids currently animating (bought)
+  // Live list UUID (from lists.slug)
+  const [listUuid, setListUuid] = useState(null);
+
+  // Active items on shopping list
+  const [currentList, setCurrentList] = useState([]);
+
+  // For bought animation
   const [animatingIds, setAnimatingIds] = useState(new Set());
 
+  // Bottom sheet state
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetMode, setSheetMode] = useState("catalog"); // "catalog" | "manual"
-  const [selectedItem, setSelectedItem] = useState(null); // for catalog items
+  const [selectedItem, setSelectedItem] = useState(null);
+
   const [formName, setFormName] = useState("");
   const [formQty, setFormQty] = useState("");
   const [formComment, setFormComment] = useState("");
   const [formSuggestBase, setFormSuggestBase] = useState(false);
   const [formCategoryId, setFormCategoryId] = useState(null);
 
-  const categoriesById = useMemo(
-    () =>
-      MOCK_CATEGORIES.reduce((acc, c) => {
-        acc[c.id] = c;
-        return acc;
-      }, {}),
-    []
-  );
+  const mountedRef = useRef(true);
 
-  const itemsInListSet = useMemo(
-    () =>
-      new Set(
-        currentList
-          .filter((x) => x.fromCatalogId != null)
-          .map((x) => x.fromCatalogId)
-      ),
-    [currentList]
-  );
+  // Build lookups
+  const categoriesById = useMemo(() => {
+    const map = {};
+    for (const c of categories) map[c.id] = c;
+    return map;
+  }, [categories]);
 
-  const filteredBaseItems = useMemo(() => {
-    if (!search.trim()) return MOCK_BASE_ITEMS;
+  const itemsInListSet = useMemo(() => {
+    return new Set(
+      currentList
+        .filter((x) => x.from_catalog_id != null)
+        .map((x) => x.from_catalog_id)
+    );
+  }, [currentList]);
+
+  // --- LIVE MODE: initial load ---
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    async function loadLive() {
+      if (!supabase) return;
+
+      // 1) categories
+      const { data: cats, error: catsErr } = await supabase
+        .from("categories")
+        .select("*")
+        .order("ordering", { ascending: true });
+
+      if (!mountedRef.current) return;
+
+      if (!catsErr && Array.isArray(cats) && cats.length > 0) {
+        setCategories(cats);
+      }
+
+      // 2) ensure list exists (by slug)
+      let listRow = null;
+      const { data: existing, error: existingErr } = await supabase
+        .from("lists")
+        .select("id, slug, title")
+        .eq("slug", listId)
+        .maybeSingle();
+
+      if (!existingErr && existing?.id) {
+        listRow = existing;
+      } else {
+        // Create list automatically (makes sharing easy)
+        const { data: inserted, error: insErr } = await supabase
+          .from("lists")
+          .insert([{ slug: listId, title: `משפחה: ${listId}` }])
+          .select("id, slug, title")
+          .single();
+
+        if (!insErr && inserted?.id) listRow = inserted;
+      }
+
+      if (!mountedRef.current) return;
+
+      if (!listRow?.id) {
+        // fallback to demo if something went wrong
+        setListUuid(null);
+        return;
+      }
+
+      setListUuid(listRow.id);
+
+      // 3) load active items (no history)
+      const { data: items, error: itemsErr } = await supabase
+        .from("items")
+        .select("*")
+        .eq("list_id", listRow.id)
+        .order("created_at", { ascending: true });
+
+      if (!mountedRef.current) return;
+
+      if (!itemsErr && Array.isArray(items)) {
+        setCurrentList(items);
+      }
+    }
+
+    if (live) {
+      loadLive();
+    } else {
+      // DEMO mode: show a couple of sample items so UI isn't empty
+      setCurrentList([
+        {
+          id: "demo-1",
+          name_he: "חלב",
+          category_id: 3,
+          qty_text: "2 ליטר",
+          comment: 'אם יש במבצע 1+1 אז לקנות',
+          from_catalog_id: 3,
+          created_at: new Date().toISOString(),
+        },
+        {
+          id: "demo-2",
+          name_he: "עגבניות",
+          category_id: 2,
+          qty_text: "6",
+          comment: "",
+          from_catalog_id: 5,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listId, live]);
+
+  // --- LIVE MODE: realtime subscribe to items changes ---
+  useEffect(() => {
+    if (!supabase || !listUuid) return;
+
+    const channel = supabase
+      .channel(`items:${listUuid}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "items",
+          filter: `list_id=eq.${listUuid}`,
+        },
+        (payload) => {
+          const ev = payload.eventType;
+          if (ev === "INSERT") {
+            const row = payload.new;
+            setCurrentList((prev) => {
+              if (prev.some((x) => x.id === row.id)) return prev;
+              return [...prev, row].sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""));
+            });
+          } else if (ev === "UPDATE") {
+            const row = payload.new;
+            setCurrentList((prev) => prev.map((x) => (x.id === row.id ? row : x)));
+          } else if (ev === "DELETE") {
+            const oldRow = payload.old;
+            setCurrentList((prev) => prev.filter((x) => x.id !== oldRow.id));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [listUuid]);
+
+  // --- Search filtering ---
+  const filteredCatalog = useMemo(() => {
+    if (!search.trim()) return catalogItems;
     const s = search.trim();
-    return MOCK_BASE_ITEMS.filter((item) => item.name_he.includes(s));
-  }, [search]);
+    return catalogItems.filter((item) => item.name_he.includes(s));
+  }, [search, catalogItems]);
 
   const filteredCurrentList = useMemo(() => {
     if (!search.trim()) return currentList;
@@ -100,6 +236,7 @@ export default function FamilyApp({ listId }) {
     return groups;
   }, [filteredCurrentList, categoriesById]);
 
+  // --- Sheet helpers ---
   function openCatalogSheet(item) {
     setSheetMode("catalog");
     setSelectedItem(item);
@@ -115,7 +252,7 @@ export default function FamilyApp({ listId }) {
     setFormQty("");
     setFormComment("");
     setFormSuggestBase(false);
-    setFormCategoryId(MOCK_CATEGORIES[0]?.id ?? null);
+    setFormCategoryId(categories[0]?.id ?? null);
     setSheetOpen(true);
   }
 
@@ -123,54 +260,96 @@ export default function FamilyApp({ listId }) {
     setSheetOpen(false);
   }
 
-  function handleAddFromCatalog() {
+  // --- Actions ---
+  async function addItemRow(row) {
+    if (!supabase || !listUuid) {
+      // demo mode: local push
+      setCurrentList((prev) => [...prev, { ...row, id: `demo-${Date.now()}` }]);
+      return;
+    }
+    const { error } = await supabase.from("items").insert([row]);
+    if (error) {
+      console.error(error);
+      alert("שגיאה בהוספה. נסה שוב.");
+    }
+  }
+
+  async function deleteItemRow(itemId) {
+    if (!supabase || !listUuid) {
+      setCurrentList((prev) => prev.filter((x) => x.id !== itemId));
+      return;
+    }
+    const { error } = await supabase.from("items").delete().eq("id", itemId);
+    if (error) {
+      console.error(error);
+      alert("שגיאה בעדכון. נסה שוב.");
+    }
+  }
+
+  async function handleAddFromCatalog() {
     if (!selectedItem) return;
-    // prevent duplicates of catalog items
+
+    // prevent duplicates (client-side); DB also has a unique index we provide in SQL
     if (itemsInListSet.has(selectedItem.id)) {
       closeSheet();
       return;
     }
 
-    const newItem = {
-      id: ++tempIdCounter,
+    await addItemRow({
+      list_id: listUuid,
       name_he: selectedItem.name_he,
       category_id: selectedItem.category_id,
-      qty_text: formQty.trim() || "",
-      comment: formComment.trim() || "",
-      fromCatalogId: selectedItem.id,
-    };
-    setCurrentList((prev) => [...prev, newItem]);
+      qty_text: formQty.trim() || null,
+      comment: formComment.trim() || null,
+      from_catalog_id: selectedItem.id,
+    });
+
     closeSheet();
   }
 
-  function handleAddManual() {
+  async function handleAddManual() {
     if (!formName.trim()) return;
-    const newItem = {
-      id: ++tempIdCounter,
+
+    // if user asked to add to base list → send to pending queue for admin (future)
+    if (supabase && listUuid && formSuggestBase) {
+      const { error } = await supabase.from("pending_items").insert([
+        {
+          list_id: listUuid,
+          name_he: formName.trim(),
+          category_id: formCategoryId ?? null,
+          qty_text: formQty.trim() || null,
+          comment: formComment.trim() || null,
+          suggested_by: null,
+        },
+      ]);
+      if (error) console.warn("pending insert error", error);
+    }
+
+    await addItemRow({
+      list_id: listUuid,
       name_he: formName.trim(),
       category_id: formCategoryId ?? null,
-      qty_text: formQty.trim() || "",
-      comment: formComment.trim() || "",
-      fromCatalogId: null,
-    };
-    setCurrentList((prev) => [...prev, newItem]);
+      qty_text: formQty.trim() || null,
+      comment: formComment.trim() || null,
+      from_catalog_id: null,
+    });
 
-    // In real app: if formSuggestBase === true → send to pending queue
     closeSheet();
   }
 
-  function handleMarkBought(id) {
-    // trigger animation: add to animatingIds, then remove after 420ms
+  function handleMarkBought(itemId) {
+    // Animate then delete (no history)
     setAnimatingIds((prev) => {
       const clone = new Set(prev);
-      clone.add(id);
+      clone.add(itemId);
       return clone;
     });
-    setTimeout(() => {
-      setCurrentList((prev) => prev.filter((item) => item.id !== id));
+
+    setTimeout(async () => {
+      await deleteItemRow(itemId);
       setAnimatingIds((prev) => {
         const clone = new Set(prev);
-        clone.delete(id);
+        clone.delete(itemId);
         return clone;
       });
     }, 420);
@@ -180,7 +359,6 @@ export default function FamilyApp({ listId }) {
 
   return (
     <div className="flex flex-col min-h-screen">
-      {/* Header */}
       <header className="sticky top-0 z-10 bg-white/90 backdrop-blur border-b border-slate-200">
         <div className="max-w-md mx-auto px-4 py-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -188,14 +366,15 @@ export default function FamilyApp({ listId }) {
               🛒
             </div>
             <div className="leading-tight">
-              <div className="text-xs text-slate-500">רשימת קניות</div>
+              <div className="text-xs text-slate-500">
+                {live ? "רשימת קניות (משותפת)" : "רשימת קניות (דמו)"}
+              </div>
               <div className="text-sm font-semibold truncate">משפחה: {listId}</div>
             </div>
           </div>
           <ModeToggle mode={mode} onChange={setMode} />
         </div>
 
-        {/* Search */}
         <div className="max-w-md mx-auto px-4 pb-3">
           <div className="relative">
             <input
@@ -211,12 +390,11 @@ export default function FamilyApp({ listId }) {
         </div>
       </header>
 
-      {/* Content */}
       <main className="flex-1 max-w-md mx-auto w-full px-4 pb-24 pt-2">
         {mode === "list" ? (
           <ListModeView
-            categories={MOCK_CATEGORIES}
-            baseItems={filteredBaseItems}
+            categories={categories}
+            catalogItems={filteredCatalog}
             currentList={currentList}
             itemsInListSet={itemsInListSet}
             onOpenSheet={openCatalogSheet}
@@ -231,7 +409,6 @@ export default function FamilyApp({ listId }) {
         )}
       </main>
 
-      {/* Floating add button (only in list mode) */}
       {mode === "list" && (
         <button
           className="fixed bottom-6 left-1/2 -translate-x-1/2 max-w-md w-[96%] mx-auto rounded-full bg-indigo-500 text-white py-3 text-base font-semibold shadow-lg flex items-center justify-center gap-2"
@@ -242,7 +419,6 @@ export default function FamilyApp({ listId }) {
         </button>
       )}
 
-      {/* Bottom sheet */}
       <BottomSheet
         open={sheetOpen}
         title={sheetMode === "catalog" ? selectedItem?.name_he ?? "" : "פריט חדש"}
@@ -258,7 +434,7 @@ export default function FamilyApp({ listId }) {
           />
         ) : (
           <ManualSheetContent
-            categories={MOCK_CATEGORIES}
+            categories={categories}
             formName={formName}
             setFormName={setFormName}
             formQty={formQty}
@@ -277,28 +453,28 @@ export default function FamilyApp({ listId }) {
   );
 }
 
-/* ----- Subcomponents (kept inside file for convenience) ----- */
-
-function ListModeView({ categories, baseItems, currentList, itemsInListSet, onOpenSheet }) {
+function ListModeView({ categories, catalogItems, currentList, itemsInListSet, onOpenSheet }) {
   const itemsByCategory = useMemo(() => {
     const map = {};
     for (const c of categories) map[c.id] = [];
-    for (const item of baseItems) {
+    for (const item of catalogItems) {
       if (!map[item.category_id]) map[item.category_id] = [];
       map[item.category_id].push(item);
     }
     return map;
-  }, [categories, baseItems]);
+  }, [categories, catalogItems]);
 
   return (
     <div className="space-y-4">
-      {/* Active items preview */}
       {currentList.length > 0 && (
         <section className="bg-white rounded-3xl shadow-sm p-3 mb-2 card">
           <h3 className="text-xs font-semibold text-slate-500 mb-1.5">כבר ברשימה ({currentList.length})</h3>
           <div className="flex flex-wrap gap-1.5 text-xs">
             {currentList.map((item) => (
-              <span key={item.id} className="inline-flex items-center gap-1 rounded-full bg-indigo-50 text-indigo-700 px-3 py-1">
+              <span
+                key={item.id}
+                className="inline-flex items-center gap-1 rounded-full bg-indigo-50 text-indigo-700 px-3 py-1"
+              >
                 <span>{item.name_he}</span>
                 {item.qty_text && <span className="text-[10px] text-indigo-500">{item.qty_text}</span>}
               </span>
@@ -307,7 +483,6 @@ function ListModeView({ categories, baseItems, currentList, itemsInListSet, onOp
         </section>
       )}
 
-      {/* Catalog by category */}
       {categories.map((cat) => {
         const items = itemsByCategory[cat.id] || [];
         if (items.length === 0) return null;
@@ -385,7 +560,9 @@ function ShoppingModeView({ groupedCurrentList, allDone, onMarkBought, animating
                     </div>
                   )}
                 </div>
-                <div className="h-6 w-6 rounded-full border border-emerald-400 flex items-center justify-center text-emerald-500 text-lg">✓</div>
+                <div className="h-6 w-6 rounded-full border border-emerald-400 flex items-center justify-center text-emerald-500 text-lg">
+                  ✓
+                </div>
               </button>
             ))}
           </div>
@@ -394,8 +571,6 @@ function ShoppingModeView({ groupedCurrentList, allDone, onMarkBought, animating
     </div>
   );
 }
-
-/* CatalogSheetContent and ManualSheetContent (full definitions) */
 
 function CatalogSheetContent({ formQty, setFormQty, formComment, setFormComment, onSubmit }) {
   return (
